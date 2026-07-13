@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<!--
+  subtlepq in-browser test page (staging, not part of the npm package)
+  (c) 2026 VESvault Corp -- Apache-2.0
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>subtlepq &mdash; in-browser test</title>
+<style>
+    :root { color-scheme: light dark; }
+    body {
+        font: 15px/1.5 system-ui, sans-serif;
+        max-width: 56rem; margin: 2rem auto; padding: 0 1rem;
+    }
+    h1 { font-size: 1.4rem; } h1 code { font-size: 1.3rem; }
+    .sub { color: #777; margin-top: -0.5rem; }
+    #summary {
+        padding: 0.6rem 1rem; border-radius: 0.5rem; margin: 1rem 0;
+        font-weight: 600; background: #8884;
+    }
+    #summary.pass { background: #2a24; } #summary.fail { background: #d234; }
+    h2 { font-size: 1rem; margin: 1.2rem 0 0.3rem; }
+    .log div { font-family: ui-monospace, monospace; font-size: 13px; white-space: pre-wrap; }
+    .ok::before   { content: "\2713 "; color: #2a2; font-weight: 700; }
+    .bad::before  { content: "\2717 "; color: #d23; font-weight: 700; }
+    .info::before { content: "\2022 "; color: #777; }
+    #console-help { margin: 1rem 0; padding: 0.4rem 0.8rem; border: 1px solid #8884; border-radius: 0.5rem; }
+    #console-help summary { cursor: pointer; }
+    #console-help pre { font-size: 12.5px; overflow-x: auto; }
+    table { border-collapse: collapse; font-size: 13px; font-family: ui-monospace, monospace; }
+    td, th { border: 1px solid #8884; padding: 0.2rem 0.7rem; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    a { color: inherit; }
+</style>
+</head>
+<body>
+<h1><code>subtlepq</code> in-browser test</h1>
+<p class="sub">WebCrypto ML-KEM / ML-DSA polyfill &mdash;
+<a href="https://www.npmjs.com/package/subtlepq">npm</a> &middot;
+served live from <code>src/</code> + <code>wasm/dist/</code> of this checkout</p>
+<div id="summary">running&hellip;</div>
+<details id="console-help">
+<summary><b>Call it from the DevTools console</b> &mdash; the polyfill stays installed on
+<code>crypto.subtle</code> after the suite finishes</summary>
+<pre>
+// generate + encapsulate/decapsulate (ML-KEM)
+kp = await crypto.subtle.generateKey("ML-KEM-768", true,
+    ["encapsulateBits", "encapsulateKey", "decapsulateBits", "decapsulateKey"]);
+({ sharedKey, ciphertext } = await crypto.subtle.encapsulateBits("ML-KEM-768", kp.publicKey));
+ss = await crypto.subtle.decapsulateBits("ML-KEM-768", kp.privateKey, ciphertext);
+new Uint8Array(sharedKey) + "" === new Uint8Array(ss) + ""   // true
+
+// straight to a usable native AES key
+({ sharedKey, ciphertext } = await crypto.subtle.encapsulateKey("ML-KEM-768", kp.publicKey,
+    { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]));
+
+// sign / verify (ML-DSA, optional context)
+dsa = await crypto.subtle.generateKey("ML-DSA-65", true, ["sign", "verify"]);
+sig = await crypto.subtle.sign("ML-DSA-65", dsa.privateKey, new TextEncoder().encode("hi"));
+await crypto.subtle.verify("ML-DSA-65", dsa.publicKey, sig, new TextEncoder().encode("hi"));
+
+// export in any format: "jwk" | "pkcs8" | "spki" | "raw-seed" | "raw-public"
+await crypto.subtle.exportKey("jwk", dsa.privateKey);
+
+// classical ECDH in the same KEM shape (subtlepq/dhkem extension, RFC 9180);
+// migrating to post-quantum = swap the name for "ML-KEM-768"
+dh = await crypto.subtle.generateKey("DHKEM-X25519-HKDF-SHA256", false,
+    ["encapsulateKey", "decapsulateKey"]);
+({ sharedKey, ciphertext } = await crypto.subtle.encapsulateKey("DHKEM-X25519-HKDF-SHA256",
+    dh.publicKey, { name: "AES-GCM", length: 256 }, false, ["encrypt"]));
+
+// the module itself is exposed too (ponyfill + install/uninstall/supports)
+subtlepq.supports("encapsulateBits", "ML-KEM-1024");
+</pre>
+</details>
+<div class="log" id="log"></div>
+
+<script type="module">
+const logEl = document.getElementById("log");
+const sumEl = document.getElementById("summary");
+let passed = 0, failed = 0;
+
+function line(cls, text) {
+    const d = document.createElement("div");
+    d.className = cls;
+    d.textContent = text;
+    logEl.appendChild(d);
+}
+function section(title) {
+    const h = document.createElement("h2");
+    h.textContent = title;
+    logEl.appendChild(h);
+}
+function ok(label, cond) {
+    if (cond) { passed++; line("ok", label); }
+    else { failed++; line("bad", label); }
+}
+const info = (text) => line("info", text);
+async function rejects(label, fn, errName) {
+    try {
+        await fn();
+        ok(label + " (expected " + errName + ", resolved)", false);
+    } catch (e) {
+        ok(label + " [" + e.name + "]", e.name === errName);
+    }
+}
+const hex = (b) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
+const unhex = (s) => Uint8Array.from(s.match(/../g).map((h) => parseInt(h, 16)));
+const eq = (a, b) => hex(a) === hex(b);
+const der = (tag, ...parts) => {
+    const len = parts.reduce((n, p) => n + p.length, 0);
+    const hdr = [tag];
+    if (len < 0x80) hdr.push(len);
+    else {
+        const b = [];
+        for (let n = len; n; n >>>= 8) b.unshift(n & 0xff);
+        hdr.push(0x80 | b.length, ...b);
+    }
+    return Uint8Array.from([...hdr, ...parts.flatMap((p) => [...p])]);
+};
+
+try {
+    const { subtle, supports, install, uninstall } = await import("./src/index.js");
+
+    /* ---- environment ---- */
+    section("Environment");
+    ok("secure context (crypto.subtle present)", !!(globalThis.crypto && crypto.subtle));
+    info(navigator.userAgent);
+    const SC = crypto.subtle && Object.getPrototypeOf(crypto.subtle).constructor;
+    const nativeML = !!SC && typeof SC.supports === "function" &&
+        SC.supports("encapsulateBits", "ML-KEM-768") === true;
+    info("platform-native ML-KEM: " + (nativeML ? "YES (polyfill self-retires)" : "no (wasm engine active)"));
+
+    /* ---- supports() ---- */
+    section("supports()");
+    ok("encapsulateBits ML-KEM-768", supports("encapsulateBits", "ML-KEM-768"));
+    ok("sign ml-dsa-87 (case-insensitive)", supports("sign", { name: "ml-dsa-87" }));
+    ok("no encapsulate for ML-DSA", !supports("encapsulateBits", "ML-DSA-65"));
+    ok("unknown algorithm false", !supports("sign", "RSA-FAKE"));
+
+    /* ---- ML-KEM ---- */
+    section("ML-KEM");
+    const kemUsages = ["encapsulateBits", "encapsulateKey", "decapsulateBits", "decapsulateKey"];
+    const t0 = performance.now();
+    const kp = await subtle.generateKey("ML-KEM-768", true, kemUsages);
+    const tGen = performance.now() - t0;
+    ok("generateKey: CryptoKey pair", kp.publicKey instanceof CryptoKey &&
+        kp.privateKey.type === "private" && kp.privateKey.algorithm.name === "ML-KEM-768");
+    const t1 = performance.now();
+    const { sharedKey: ss1, ciphertext } = await subtle.encapsulateBits("ML-KEM-768", kp.publicKey);
+    const tEnc = performance.now() - t1;
+    ok("encapsulateBits: 32-byte ss, 1088-byte ct",
+        ss1.byteLength === 32 && ciphertext.byteLength === 1088);
+    const t2 = performance.now();
+    const ss2 = await subtle.decapsulateBits("ML-KEM-768", kp.privateKey, ciphertext);
+    const tDec = performance.now() - t2;
+    ok("decapsulateBits: shared secrets match", eq(ss1, ss2));
+
+    const gcm = { name: "AES-GCM", length: 256 };
+    const enc = await subtle.encapsulateKey("ML-KEM-768", kp.publicKey, gcm, false, ["encrypt"]);
+    ok("encapsulateKey: sharedKey is a native CryptoKey",
+        enc.sharedKey instanceof CryptoKey && enc.sharedKey.algorithm.name === "AES-GCM");
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const msg = new TextEncoder().encode("subtlepq bridges to native crypto");
+    const sealed = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, enc.sharedKey, msg);
+    const rxKey = await subtle.decapsulateKey("ML-KEM-768", kp.privateKey, enc.ciphertext,
+        gcm, false, ["decrypt"]);
+    const opened = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, rxKey, sealed);
+    ok("native AES-GCM roundtrip via KEM shared key", eq(opened, msg));
+    await rejects("encapsulate with the private key",
+        () => subtle.encapsulateBits("ML-KEM-768", kp.privateKey), "InvalidAccessError");
+
+    /* ---- ML-DSA ---- */
+    section("ML-DSA");
+    const dsa = await subtle.generateKey("ML-DSA-65", true, ["sign", "verify"]);
+    const data = new TextEncoder().encode("subtlepq browser test");
+    const ctxAlg = { name: "ML-DSA-65", context: new TextEncoder().encode("subtlepq-ctx") };
+    const t3 = performance.now();
+    const sig = await subtle.sign(ctxAlg, dsa.privateKey, data);
+    const tSig = performance.now() - t3;
+    ok("sign: 3309-byte signature", sig.byteLength === 3309);
+    const t4 = performance.now();
+    ok("verify with context", await subtle.verify(ctxAlg, dsa.publicKey, sig, data));
+    const tVer = performance.now() - t4;
+    ok("verify fails without context", !(await subtle.verify("ML-DSA-65", dsa.publicKey, sig, data)));
+    await rejects("context over 255 bytes",
+        () => subtle.sign({ name: "ML-DSA-65", context: new Uint8Array(256) }, dsa.privateKey, data),
+        "OperationError");
+
+    /* ---- key formats ---- */
+    section("Key formats: spki / pkcs8 / jwk");
+    const spki = await subtle.exportKey("spki", kp.publicKey);
+    ok("spki DER header (params-absent AlgorithmIdentifier)",
+        hex(spki.slice(0, 17)) === "308204b2300b0609608648016503040402");
+    const pubBack = await subtle.importKey("spki", spki, "ML-KEM-768", true, ["encapsulateBits"]);
+    ok("spki roundtrip", eq(await subtle.exportKey("raw-public", pubBack),
+        await subtle.exportKey("raw-public", kp.publicKey)));
+    await rejects("spki OID vs algorithm mismatch",
+        () => subtle.importKey("spki", spki, "ML-KEM-512", true, ["encapsulateBits"]), "DataError");
+
+    const p8 = await subtle.exportKey("pkcs8", kp.privateKey);
+    ok("pkcs8 seed-only [0] CHOICE (86 bytes)", p8.byteLength === 86 &&
+        hex(p8.slice(0, 22)) === "3054020100300b060960864801650304040204428040");
+    const privBack = await subtle.importKey("pkcs8", p8, "ML-KEM-768", true, ["decapsulateBits"]);
+    const seedK = await subtle.exportKey("raw-seed", kp.privateKey);
+    ok("pkcs8 roundtrip", eq(await subtle.exportKey("raw-seed", privBack), seedK));
+    const OID768 = der(0x06, [0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x04, 0x02]);
+    await rejects("pkcs8 expandedKey-only CHOICE",
+        () => subtle.importKey("pkcs8",
+            der(0x30, der(0x02, [0]), der(0x30, OID768), der(0x04, der(0x04, new Uint8Array(2400)))),
+            "ML-KEM-768", true, ["decapsulateBits"]), "NotSupportedError");
+
+    const jwk = await subtle.exportKey("jwk", dsa.privateKey);
+    ok('jwk: kty "AKP", alg, pub/priv, ext, key_ops', jwk.kty === "AKP" &&
+        jwk.alg === "ML-DSA-65" && typeof jwk.pub === "string" &&
+        typeof jwk.priv === "string" && jwk.ext === true && jwk.key_ops.includes("sign"));
+    const dsaBack = await subtle.importKey("jwk", jwk, "ML-DSA-65", true, ["sign"]);
+    ok("jwk roundtrip signs", await subtle.verify(ctxAlg, dsa.publicKey,
+        await subtle.sign(ctxAlg, dsaBack, data), data));
+    await rejects("jwk ext=false vs extractable import",
+        () => subtle.importKey("jwk", { ...jwk, ext: false }, "ML-DSA-65", true, ["sign"]),
+        "DataError");
+    await rejects("jwk key_ops must permit requested usages",
+        () => subtle.importKey("jwk", { ...jwk, key_ops: ["verify"] }, "ML-DSA-65", true, ["sign"]),
+        "DataError");
+
+    /* ---- wrapKey / unwrapKey ---- */
+    section("wrapKey / unwrapKey");
+    const kek = await crypto.subtle.generateKey(gcm, false, ["wrapKey", "unwrapKey"]);
+    const ivw = crypto.getRandomValues(new Uint8Array(12));
+    const wrapped = await subtle.wrapKey("pkcs8", kp.privateKey, kek, { name: "AES-GCM", iv: ivw });
+    ok("AES-GCM wrap of pkcs8 (86+16 bytes)", wrapped.byteLength === 102);
+    const unwrapped = await subtle.unwrapKey("pkcs8", wrapped, kek, { name: "AES-GCM", iv: ivw },
+        "ML-KEM-768", false, ["decapsulateBits"]);
+    ok("unwrapped key decapsulates + honors extractable=false",
+        eq(await subtle.decapsulateBits("ML-KEM-768", unwrapped, ciphertext), ss1) &&
+        unwrapped.extractable === false);
+    const kw = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, false,
+        ["wrapKey", "unwrapKey"]);
+    const wrappedSeed = await subtle.wrapKey("raw-seed", kp.privateKey, kw, "AES-KW");
+    ok("AES-KW wrap of raw-seed (72 bytes)", wrappedSeed.byteLength === 72);
+    const unwrappedKw = await subtle.unwrapKey("raw-seed", wrappedSeed, kw, "AES-KW",
+        "ML-KEM-768", true, ["decapsulateKey"]);
+    ok("AES-KW roundtrip", eq(await subtle.exportKey("raw-seed", unwrappedKw), seedK));
+    const wrappedJwk = await subtle.wrapKey("jwk", dsa.privateKey, kw, "AES-KW");
+    ok("AES-KW jwk wrap is 8-byte aligned", wrappedJwk.byteLength % 8 === 0);
+    await rejects("ML key as wrapping key",
+        () => subtle.wrapKey("raw-seed", kp.privateKey, kp.publicKey, "ML-KEM-768"),
+        "InvalidAccessError");
+
+    /* ---- NIST ACVP known-answer vectors ---- */
+    section("NIST ACVP known-answer vectors");
+    const vectors = await (await fetch("./test/vectors/acvp-subset.json")).json();
+    let kats = 0;
+    for (const c of vectors.sets["ML-KEM-keyGen-FIPS203"]) {
+        if (!c.test.d || !c.test.z) continue;
+        const alg = c.group.parameterSet;
+        const priv = await subtle.importKey("raw-seed", unhex(c.test.d + c.test.z), alg,
+            false, ["decapsulateBits"]);
+        const pub = await subtle.getPublicKey(priv, ["encapsulateBits"]);
+        ok(alg + " keyGen seed → ek matches NIST vector",
+            hex(await subtle.exportKey("raw-public", pub)) === c.test.ek.toLowerCase());
+        kats++;
+    }
+    for (const c of vectors.sets["ML-DSA-keyGen-FIPS204"].slice(0, 3)) {
+        const alg = c.group.parameterSet;
+        const priv = await subtle.importKey("raw-seed", unhex(c.test.seed), alg, false, ["sign"]);
+        const pub = await subtle.getPublicKey(priv, ["verify"]);
+        ok(alg + " keyGen seed → pk matches NIST vector",
+            hex(await subtle.exportKey("raw-public", pub)) === c.test.pk.toLowerCase());
+        kats++;
+    }
+    ok("ran " + kats + " keyGen KATs", kats >= 6);
+
+    /* ---- forged key boundaries ---- */
+    section("Forged key boundaries");
+    try {
+        structuredClone(kp.privateKey);
+        ok("structuredClone must throw", false);
+    } catch (e) {
+        ok("structuredClone fails loudly [" + e.name + "]", e.name === "DataCloneError");
+    }
+    await rejects("non-extractable export",
+        async () => {
+            const k = await subtle.generateKey("ML-DSA-44", false, ["sign", "verify"]);
+            return subtle.exportKey("raw-seed", k.privateKey);
+        }, "InvalidAccessError");
+
+    /* ---- DHKEM extension: RFC 9180 over native ECDH / X25519 ---- */
+    section("DHKEM extension (RFC 9180 over native ECDH / X25519)");
+    const dhkem = await import("./src/dhkem.js");
+    dhkem.register();
+    const DX = "DHKEM-X25519-HKDF-SHA256", DP = "DHKEM-P256-HKDF-SHA256";
+    ok("supports() after register()", supports("encapsulateBits", DX) &&
+        supports("decapsulateKey", DP) && !supports("sign", DX));
+    const b64u = (b) => btoa(String.fromCharCode(...b))
+        .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const rfc = await (await fetch("./test/vectors/rfc9180-subset.json")).json();
+    for (const v of rfc.vectors) {
+        const pk = unhex(v.pkRm);
+        const jwk = v.alg === DX
+            ? { kty: "OKP", crv: "X25519", d: b64u(unhex(v.skRm)), x: b64u(pk) }
+            : { kty: "EC", crv: "P-256", d: b64u(unhex(v.skRm)),
+                x: b64u(pk.slice(1, 33)), y: b64u(pk.slice(33, 65)) };
+        const skR = await subtle.importKey("jwk", jwk, v.alg, false, ["decapsulateBits"]);
+        const ss = await subtle.decapsulateBits(v.alg, skR, unhex(v.enc));
+        ok(v.alg + " matches the RFC 9180 shared_secret", hex(ss) === v.shared_secret);
+    }
+    const dkp = await subtle.generateKey(DX, false,
+        ["encapsulateBits", "encapsulateKey", "decapsulateBits", "decapsulateKey"]);
+    ok("DHKEM keys are genuine native CryptoKeys", dkp.privateKey instanceof CryptoKey &&
+        dkp.privateKey.usages.includes("deriveBits"));
+    const de = await subtle.encapsulateBits(DX, dkp.publicKey);
+    ok("X25519 roundtrip (ciphertext = 32-byte ephemeral pk)",
+        de.ciphertext.byteLength === 32 &&
+        eq(de.sharedKey, await subtle.decapsulateBits(DX, dkp.privateKey, de.ciphertext)));
+    ok("DHKEM keys structured-clone (unlike forged ML-* keys)",
+        structuredClone(dkp.privateKey) instanceof CryptoKey);
+
+    /* ---- install(): true polyfill ---- */
+    section("install() true polyfill");
+    install();
+    ok("crypto.subtle.encapsulateBits appears", typeof crypto.subtle.encapsulateBits === "function");
+    const kp2 = await crypto.subtle.generateKey("ML-KEM-512", true, kemUsages);
+    const e2 = await crypto.subtle.encapsulateBits("ML-KEM-512", kp2.publicKey);
+    const d2 = await crypto.subtle.decapsulateBits("ML-KEM-512", kp2.privateKey, e2.ciphertext);
+    ok("patched crypto.subtle KEM roundtrip", eq(e2.sharedKey, d2));
+    const dig = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("abc"));
+    ok("native digest passthrough", hex(dig).startsWith("ba7816bf"));
+    const SC2 = Object.getPrototypeOf(crypto.subtle).constructor;
+    ok("SubtleCrypto.supports(ML-KEM-1024)", SC2.supports("encapsulateKey", "ML-KEM-1024") === true);
+    const wrapped2 = await crypto.subtle.wrapKey("raw-seed", kp2.privateKey, kw, "AES-KW");
+    const unwrapped2 = await crypto.subtle.unwrapKey("raw-seed", wrapped2, kw, "AES-KW",
+        "ML-KEM-512", true, ["decapsulateBits"]);
+    ok("patched wrapKey/unwrapKey roundtrip",
+        eq(await crypto.subtle.exportKey("raw-seed", unwrapped2),
+           await crypto.subtle.exportKey("raw-seed", kp2.privateKey)));
+    uninstall();
+    ok("uninstall restores crypto.subtle", typeof crypto.subtle.encapsulateBits !== "function");
+
+    /* leave the polyfill INSTALLED so the DevTools console is a live
+     * playground against the real crypto.subtle, and expose the module */
+    install();
+    globalThis.subtlepq = { subtle, supports, install, uninstall };
+
+    /* ---- timings ---- */
+    section("Timings (single run, includes first-use wasm load in generateKey)");
+    const tbl = document.createElement("table");
+    tbl.innerHTML = "<tr><th>op</th><th>ms</th></tr>" + [
+        ["ML-KEM-768 generateKey (+ wasm load)", tGen],
+        ["ML-KEM-768 encapsulateBits", tEnc],
+        ["ML-KEM-768 decapsulateBits", tDec],
+        ["ML-DSA-65 sign", tSig],
+        ["ML-DSA-65 verify", tVer],
+    ].map(([n, t]) => "<tr><td>" + n + "</td><td>" + t.toFixed(1) + "</td></tr>").join("");
+    logEl.appendChild(tbl);
+} catch (e) {
+    failed++;
+    line("bad", "UNCAUGHT: " + (e && e.stack || e));
+}
+
+sumEl.textContent = failed
+    ? "FAIL: " + failed + " of " + (passed + failed) + " checks failed"
+    : "PASS: all " + passed + " checks";
+sumEl.className = failed ? "fail" : "pass";
+document.title = (failed ? "✗ " : "✓ ") + document.title;
+</script>
+</body>
+</html>

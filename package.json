@@ -1,0 +1,52 @@
+{
+    "name": "subtlepq",
+    "version": "0.3.0",
+    "description": "Post-quantum polyfill for the Web Cryptography API: ML-KEM (FIPS 203) and ML-DSA (FIPS 204) per the WICG Modern Algorithms draft, with native delegation",
+    "type": "module",
+    "license": "Apache-2.0",
+    "author": "VESvault Corp",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/vesvault/subtlepq.git"
+    },
+    "homepage": "https://github.com/vesvault/subtlepq#readme",
+    "bugs": {
+        "url": "https://github.com/vesvault/subtlepq/issues"
+    },
+    "engines": {
+        "node": ">=18"
+    },
+    "sideEffects": false,
+    "files": [
+        "src/algorithms.js",
+        "src/dhkem.js",
+        "src/engine.js",
+        "src/errors.js",
+        "src/formats.js",
+        "src/index.js",
+        "src/install.js",
+        "src/keystore.js",
+        "src/router.js",
+        "src/subtle.js",
+        "wasm/dist/subtlepq-engine.mjs",
+        "wasm/dist/subtlepq-engine.single.mjs",
+        "wasm/dist/subtlepq-engine.wasm"
+    ],
+    "exports": {
+        ".": "./src/index.js",
+        "./install": "./src/install.js",
+        "./dhkem": "./src/dhkem.js"
+    },
+    "scripts": {
+        "build": "wasm/build.sh",
+        "prepack": "node -e \"const p=require('./package.json'),fs=require('fs');for(const f of p.files)if(!fs.existsSync(f))throw new Error(f+' missing - run wasm/build.sh before packing')\"",
+        "test": "node test/engine-test.mjs && node test/polyfill-test.mjs && node test/dhkem-test.mjs",
+        "test:parity": "node test/parity-native.mjs",
+        "test:libves": "node test/parity-libves.mjs"
+    },
+    "keywords": [
+        "ml-kem", "ml-dsa", "webcrypto", "polyfill", "post-quantum",
+        "fips203", "fips204", "kyber", "dilithium", "subtlecrypto",
+        "encapsulation", "kem", "dhkem", "hpke", "rfc9180"
+    ]
+}
