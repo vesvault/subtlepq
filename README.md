@@ -78,6 +78,10 @@ AES-KW/AES-GCM wrapKey output, and matching DOMException names on malformed inpu
 (an independent liboqs build and ASN.1 layer): same-seed keypair equality, SPKI byte
 parity, and mutual key import and encapsulation.
 
+## Built by the libVES team
+
+subtlepq comes from [VESvault](https://vesvault.com), the team behind [libVES](https://github.com/vesvault/libVES) — end-to-end encryption between users with post-quantum vaults (ML-KEM via liboqs) and VESrecovery™ key recovery. subtlepq gives you the primitives; if you need what goes on top — user-to-user key exchange, shared vaults, recovery from a lost key — that's libVES.
+
 ## License
 
 Apache-2.0, (c) 2026 VESvault Corp.
