@@ -340,9 +340,10 @@ try {
     uninstall();
     ok("uninstall restores crypto.subtle", typeof crypto.subtle.encapsulateBits !== "function");
 
-    /* leave the polyfill INSTALLED so the DevTools console is a live
-     * playground against the real crypto.subtle, and expose the module */
-    install();
+    /* leave the polyfill INSTALLED (with the DHKEM extension) so the
+     * DevTools console is a live playground against the real
+     * crypto.subtle, and expose the module */
+    install(true);
     globalThis.subtlepq = { subtle, supports, install, uninstall };
 
     /* ---- timings ---- */

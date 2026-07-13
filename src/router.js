@@ -13,27 +13,35 @@
 import { normalizeAlg } from "./algorithms.js";
 import { isOurKey } from "./keystore.js";
 
-const ours = (alg) => !!normalizeAlg(alg);
+const oursAlg = (alg) => !!normalizeAlg(alg);
 
-/* args => should subtlepq handle this call? -- keyed by SubtleCrypto method */
-export const ROUTES = {
-    /* wrapped existing methods */
-    generateKey: (args) => ours(args[0]),
-    importKey: (args) => ours(args[2]),
-    exportKey: (args) => isOurKey(args[1]),
-    sign: (args) => isOurKey(args[1]) || ours(args[0]),
-    verify: (args) => isOurKey(args[1]) || ours(args[0]),
-    /* wrap/unwrap: ours when the wrapped key or either key handle is ours;
-     * (format, key, wrappingKey, ...) / (format, data, unwrappingKey, wrapAlg, keyAlg, ...) */
-    wrapKey: (args) => isOurKey(args[1]) || isOurKey(args[2]),
-    unwrapKey: (args) => ours(args[4]) || isOurKey(args[2]),
-    /* methods added by the WICG draft */
-    encapsulateBits: (args) => ours(args[0]) || isOurKey(args[1]),
-    encapsulateKey: (args) => ours(args[0]) || isOurKey(args[1]),
-    decapsulateBits: (args) => ours(args[0]) || isOurKey(args[1]),
-    decapsulateKey: (args) => ours(args[0]) || isOurKey(args[1]),
-    getPublicKey: (args) => isOurKey(args[0]),
-};
+/* args => should subtlepq handle this call? -- keyed by SubtleCrypto method.
+ * `ours` is the algorithm-name predicate: the ponyfill claims every
+ * registered name (default); install() narrows it to exclude algorithms the
+ * platform supports natively. Key-provenance checks are not narrowed --
+ * a polyfill-forged key can only be operated on here. */
+export function makeRoutes(ours = oursAlg) {
+    return {
+        /* wrapped existing methods */
+        generateKey: (args) => ours(args[0]),
+        importKey: (args) => ours(args[2]),
+        exportKey: (args) => isOurKey(args[1]),
+        sign: (args) => isOurKey(args[1]) || ours(args[0]),
+        verify: (args) => isOurKey(args[1]) || ours(args[0]),
+        /* wrap/unwrap: ours when the wrapped key or either key handle is ours;
+         * (format, key, wrappingKey, ...) / (format, data, unwrappingKey, wrapAlg, keyAlg, ...) */
+        wrapKey: (args) => isOurKey(args[1]) || isOurKey(args[2]),
+        unwrapKey: (args) => ours(args[4]) || isOurKey(args[2]),
+        /* methods added by the WICG draft */
+        encapsulateBits: (args) => ours(args[0]) || isOurKey(args[1]),
+        encapsulateKey: (args) => ours(args[0]) || isOurKey(args[1]),
+        decapsulateBits: (args) => ours(args[0]) || isOurKey(args[1]),
+        decapsulateKey: (args) => ours(args[0]) || isOurKey(args[1]),
+        getPublicKey: (args) => isOurKey(args[0]),
+    };
+}
+
+export const ROUTES = makeRoutes();
 
 /* Wrapper factories carrying the spec parameter lists, so consoles show real
  * argument hints (and fn.length matches native) instead of (...args). Written

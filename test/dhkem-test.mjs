@@ -184,4 +184,18 @@ ok("supports false after unregister", !supports("encapsulateBits", X));
 await rejects("ponyfill rejects after unregister",
     () => subtle.encapsulateBits(X, kpX.publicKey), "NotSupportedError");
 
+/* ---- install(true): registers DHKEM itself, uninstall() unregisters ---- */
+const hadNativeEncaps = typeof crypto.subtle.encapsulateBits === "function";
+install(true);
+ok("install(true) registers DHKEM", supports("encapsulateBits", X) &&
+    crypto.subtle.constructor.supports("encapsulateBits", X));
+const kpT = await crypto.subtle.generateKey(X, false, kemUsages);
+const encT = await crypto.subtle.encapsulateBits(X, kpT.publicKey);
+ok("install(true) roundtrip", eq(encT.sharedKey,
+    await crypto.subtle.decapsulateBits(X, kpT.privateKey, encT.ciphertext)));
+uninstall();
+/* the method itself survives uninstall iff it was native to begin with */
+ok("uninstall unregisters DHKEM", !supports("encapsulateBits", X) &&
+    (typeof crypto.subtle.encapsulateBits === "function") === hadNativeEncaps);
+
 console.log("PASS:", passed, "checks");

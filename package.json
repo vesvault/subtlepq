@@ -1,6 +1,6 @@
 {
     "name": "subtlepq",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "description": "Post-quantum polyfill for the Web Cryptography API: ML-KEM (FIPS 203) and ML-DSA (FIPS 204) per the WICG Modern Algorithms draft, with native delegation",
     "type": "module",
     "license": "Apache-2.0",

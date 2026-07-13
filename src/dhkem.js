@@ -311,7 +311,8 @@ const ops = {
 };
 
 /* Makes the DHKEM-* names routable through the subtlepq ponyfill `subtle`
- * and, after install(), through crypto.subtle; call before install(). */
+ * and, after install(), through crypto.subtle. True-polyfill users don't
+ * need this: install(true) registers (and uninstall() unregisters). */
 export function register() {
     for (const name of Object.keys(SUITES)) registerExtension(name, "kem", ops);
 }

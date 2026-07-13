@@ -6,14 +6,19 @@
  *
  * install() wraps SubtleCrypto.prototype methods so ML-* algorithms and
  * subtlepq keys are handled here while every other call reaches the saved
- * native original with untouched arguments. Methods and algorithms the
- * platform already supports natively are left alone (self-retiring).
- * uninstall() restores the originals.
+ * native original with untouched arguments. Native support is probed per
+ * algorithm at install time: algorithms the platform already does natively
+ * are delegated to it (their keys stay genuine platform keys), only the
+ * gaps are polyfilled, and when there are no gaps install() is a no-op
+ * (self-retiring). install(true) also registers the subtlepq/dhkem
+ * extension names. uninstall() restores the originals and unregisters
+ * what install(true) registered.
  ***************************************************************************/
 
 import * as ours from "./subtle.js";
-import { ROUTES, shape } from "./router.js";
-import { hasExtensions } from "./algorithms.js";
+import { makeRoutes, shape } from "./router.js";
+import { allAlgorithms, normalizeAlg } from "./algorithms.js";
+import * as dhkem from "./dhkem.js";
 import * as E from "./errors.js";
 
 let saved = null;
@@ -27,7 +32,10 @@ function nativeSupports(ctor, operation, algorithm) {
     }
 }
 
-export function install() {
+/* the operation that proves native end-to-end support for an algorithm kind */
+const PROBE = { kem: "encapsulateBits", sig: "sign" };
+
+export function install(withDhkem) {
     if (saved) return;
     const subtle = globalThis.crypto && globalThis.crypto.subtle;
     if (!subtle) {
@@ -37,16 +45,29 @@ export function install() {
     const ctor = subtle.constructor;
     saved = { proto, ctor, methods: {}, supports: Object.getOwnPropertyDescriptor(ctor, "supports") };
 
-    /* nothing to do on platforms that already do ML-KEM + ML-DSA natively --
-     * unless extension algorithms (subtlepq/dhkem) are registered, which no
-     * native implementation covers; register() before install() */
-    if (!hasExtensions() &&
-        nativeSupports(ctor, "encapsulateBits", "ML-KEM-768") &&
-        nativeSupports(ctor, "sign", "ML-DSA-65")) {
-        return;
+    if (withDhkem) {
+        dhkem.register();
+        saved.dhkem = true;
     }
 
-    for (const [op, isOurs] of Object.entries(ROUTES)) {
+    /* per-algorithm native delegation, probed once at install time: names
+     * the platform already supports natively (extension names included,
+     * should an implementation ever adopt them) route to the native
+     * original -- their keys stay genuine platform keys -- and only the
+     * gaps are polyfilled. No gaps at all: nothing to patch, self-retire.
+     * Polyfill-forged keys always stay here (provenance beats name). */
+    const native = new Set();
+    const algs = allAlgorithms();
+    for (const { name, kind } of algs) {
+        if (nativeSupports(ctor, PROBE[kind], name)) native.add(name);
+    }
+    if (native.size === algs.length) return;
+    const oursAlg = (alg) => {
+        const a = normalizeAlg(alg);
+        return !!a && !native.has(a.name);
+    };
+
+    for (const [op, isOurs] of Object.entries(makeRoutes(oursAlg))) {
         const orig = proto[op];
         saved.methods[op] = Object.getOwnPropertyDescriptor(proto, op);
         const wrapped = shape(op, (args, self) => {
@@ -80,5 +101,6 @@ export function uninstall() {
     }
     if (saved.supports) Object.defineProperty(saved.ctor, "supports", saved.supports);
     else delete saved.ctor.supports;
+    if (saved.dhkem) dhkem.unregister();
     saved = null;
 }

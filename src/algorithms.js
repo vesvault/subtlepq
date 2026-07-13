@@ -25,8 +25,14 @@ export function unregisterExtension(name) {
     EXTENSIONS.delete(name.toLowerCase());
 }
 
-export function hasExtensions() {
-    return EXTENSIONS.size > 0;
+/* Every algorithm currently routed by subtlepq: the core ML-* set plus
+ * runtime-registered extensions. */
+export function allAlgorithms() {
+    const all = NAMES.map((name) => ({
+        name, kind: name.startsWith("ML-KEM") ? "kem" : "sig",
+    }));
+    for (const { name, kind } of EXTENSIONS.values()) all.push({ name, kind });
+    return all;
 }
 
 /* WebCrypto algorithm names are matched case-insensitively.

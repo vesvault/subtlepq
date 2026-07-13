@@ -279,4 +279,38 @@ ok("uninstall removes encapsulateBits", typeof crypto.subtle.encapsulateBits !==
 const dig3 = await crypto.subtle.digest("SHA-256", Buffer.from("abc"));
 ok("native digest after uninstall", Buffer.from(dig3).equals(Buffer.from(digest)));
 
+/* ---- partial native support: only the gaps are intercepted ----
+ * Pretend the platform does ML-KEM-512 natively (mock ctor.supports before
+ * install). The polyfill must then delegate ML-KEM-512 to the real native
+ * methods -- which on this Node don't know it, so the call rejects natively
+ * instead of succeeding through the polyfill -- while still handling
+ * ML-KEM-768 and reporting supports() for both. */
+const SC2 = Object.getPrototypeOf(crypto.subtle).constructor;
+const hadSupports = Object.getOwnPropertyDescriptor(SC2, "supports");
+Object.defineProperty(SC2, "supports", {
+    value: (op, alg) => String(alg) === "ML-KEM-512",
+    writable: true, configurable: true,
+});
+install();
+ok("partial: gap algo still polyfilled",
+    (await crypto.subtle.generateKey("ML-KEM-768", false, kemUsages))
+        .publicKey.algorithm.name === "ML-KEM-768");
+try {
+    /* the polyfill would succeed here; only native delegation rejects */
+    await crypto.subtle.generateKey("ML-KEM-512", false, kemUsages);
+    assert(false, "partial: 'native' algo must delegate (and fail natively here)");
+} catch (e) {
+    ok("partial: 'native' algo delegated to platform [" + e.name + "]", true);
+}
+ok("partial: polyfill-forged key still handled by provenance",
+    (await crypto.subtle.encapsulateBits("ML-KEM-512", pub2)).ciphertext.byteLength === 768);
+ok("partial: supports() covers both",
+    SC2.supports("encapsulateBits", "ML-KEM-512") &&
+    SC2.supports("encapsulateBits", "ML-KEM-768"));
+uninstall();
+if (hadSupports) Object.defineProperty(SC2, "supports", hadSupports);
+else delete SC2.supports;
+ok("partial: mock supports cleaned up",
+    hadSupports ? SC2.supports === hadSupports.value : SC2.supports === undefined);
+
 console.log("PASS:", passed, "checks");

@@ -23,11 +23,11 @@ const { sharedKey, ciphertext } = await subtle.encapsulateKey("ML-KEM-768", publ
 // sharedKey is a genuine native CryptoKey; all downstream crypto is native
 ```
 
-True polyfill (patches `crypto.subtle`, delegates everything non-ML to the platform, self-retires where native support exists):
+True polyfill (patches `crypto.subtle`; native support is probed per algorithm, so anything the platform already does natively — and every non-ML call — is delegated to it, only the gaps are polyfilled, and with no gaps nothing is patched at all):
 
 ```js
 import { install } from "subtlepq";
-install();
+install();              // install(true) also enables the DHKEM extension below
 const kp = await crypto.subtle.generateKey("ML-DSA-65", false, ["sign", "verify"]);
 const sig = await crypto.subtle.sign({ name: "ML-DSA-65", context: ctx }, kp.privateKey, data);
 ```
@@ -38,9 +38,11 @@ Known limits (inherent to a script polyfill, made loud rather than silent): ML-*
 
 `subtlepq/dhkem` wraps ephemeral-static ECDH as a KEM per [RFC 9180 §4.1](https://www.rfc-editor.org/rfc/rfc9180#section-4.1) — `DHKEM-X25519-HKDF-SHA256` and `DHKEM-P256-HKDF-SHA256` — so classical and post-quantum key agreement share one calling convention, and migrating to ML-KEM is a name change:
 
+With the true polyfill it's one flag — `install(true)` — and the `DHKEM-*` names work on `crypto.subtle`. Ponyfill users register the extension explicitly:
+
 ```js
 import * as dhkem from "subtlepq/dhkem";
-dhkem.register();       // before install(), if you use the true polyfill
+dhkem.register();
 import { subtle } from "subtlepq";
 
 const kp = await subtle.generateKey("DHKEM-X25519-HKDF-SHA256", false,
