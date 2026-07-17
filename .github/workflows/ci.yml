@@ -1,0 +1,111 @@
+# subtlepq CI
+#
+# build        — wasm engine from the pinned liboqs submodule (emsdk pin below must
+#                match wasm/build.sh expectations for reproducible output)
+# test         — full suite on Node 20/22/24; native parity oracle on 24 (needs >=24.7)
+# reproducible — rebuilt wasm byte-compared against the published npm tarball
+# pages        — deploys the repo plus freshly built wasm/dist as the live demo page;
+#                wasm/dist is gitignored, so Pages must be built here, not from a branch
+#                (repo Settings -> Pages -> Source = "GitHub Actions")
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 5.0.7
+      - name: Build wasm engine
+        run: wasm/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-dist
+          path: wasm/dist/
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-dist
+          path: wasm/dist/
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+      - name: Parity vs native WebCrypto ML-KEM/ML-DSA
+        if: matrix.node == 24
+        run: npm run test:parity
+
+  reproducible:
+    needs: build
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-dist
+          path: rebuilt-dist
+      - name: Byte-compare against published npm tarball
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          if ! npm view "subtlepq@$VER" version >/dev/null 2>&1; then
+            echo "subtlepq@$VER not published yet — skipping"
+            exit 0
+          fi
+          npm pack "subtlepq@$VER" >/dev/null
+          tar xzf "subtlepq-$VER.tgz"
+          rc=0
+          for f in package/wasm/dist/*; do
+            b=$(basename "$f")
+            if cmp -s "$f" "rebuilt-dist/$b"; then
+              echo "IDENTICAL: $b"
+            else
+              echo "DIFFERS:   $b"
+              rc=1
+            fi
+          done
+          exit $rc
+
+  pages:
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-dist
+          path: wasm/dist/
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          rsync -a --exclude .git --exclude _site --exclude .github ./ _site/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
