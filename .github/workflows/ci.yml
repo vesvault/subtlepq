@@ -2,7 +2,10 @@
 #
 # build        — wasm engine from the pinned liboqs submodule (emsdk pin below must
 #                match wasm/build.sh expectations for reproducible output)
-# test         — full suite on Node 20/22/24; native parity oracle on 24 (needs >=24.7)
+# test         — Node 20/22: full suite (no native ML-KEM/ML-DSA -> everything patched).
+#                Node 24: engine + dhkem + native parity oracle; polyfill-test is
+#                excluded there by design — with native ML-* (>=24.7), install()
+#                delegates instead of patching, so its patch-specific asserts don't apply
 # reproducible — rebuilt wasm byte-compared against the published npm tarball
 # pages        — deploys the repo plus freshly built wasm/dist as the live demo page;
 #                wasm/dist is gitignored, so Pages must be built here, not from a branch
@@ -48,7 +51,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - run: npm test
+      - name: Full suite (polyfill platform)
+        if: matrix.node != 24
+        run: npm test
+      - name: Engine + DHKEM (native ML platform)
+        if: matrix.node == 24
+        run: |
+          node test/engine-test.mjs
+          node test/dhkem-test.mjs
       - name: Parity vs native WebCrypto ML-KEM/ML-DSA
         if: matrix.node == 24
         run: npm run test:parity
